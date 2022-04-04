@@ -32,6 +32,52 @@ type MapTaskReply struct {
 	filename string
 }
 
+// RegisterWorker Handler
+
+type RegisterWorkerArgs struct {
+}
+
+type RegisterWorkerReply struct {
+	WorkerId int
+}
+
+// DispathTask Handler
+
+type DispatchTaskArgs struct {
+	WorkerId int
+}
+
+type DispatchTaskReply struct {
+	TaskId    int
+	TaskType  string
+	TaskInput []string
+	NReduce   int
+}
+
+// SubmitTask Handler
+
+type SubmitTaskArgs struct {
+	WorkerId   int
+	TaskId     int
+	TaskType   string
+	TaskOutput []string
+}
+
+type SubmitTaskReply struct {
+}
+
+// KeepAlive Handler
+
+type KeepAliveArgs struct {
+	Id int
+}
+
+type KeepAliveReply struct {
+	IsDone    bool
+	TaskType  string
+	TaskInput string
+}
+
 // Add your RPC definitions here.
 
 // Cook up a unique-ish UNIX-domain socket name
