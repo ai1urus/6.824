@@ -69,7 +69,7 @@ type SubmitTaskReply struct {
 // KeepAlive Handler
 
 type KeepAliveArgs struct {
-	Id int
+	WorkerId int
 }
 
 type KeepAliveReply struct {

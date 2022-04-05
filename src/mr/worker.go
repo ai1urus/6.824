@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"time"
 )
 
 //
@@ -21,6 +22,7 @@ type KeyValue struct {
 }
 
 var debugWorker bool = false
+var debugWithCoordinator bool = false
 
 // for sorting by key.
 type ByKey []KeyValue
@@ -60,36 +62,43 @@ func Worker(mapf func(string, string) []KeyValue,
 			fmt.Println("任务已结束")
 		}
 	}
-	// 进入周期心跳汇报（开一个goroutine来做）
-	// for true {
-	// 	argsKeepAlive := KeepAliveArgs{}
-	// 	replyKeepAlive := KeepAliveReply{}
-	// 	ok := call("Coordinator.KeepWorkerAlive", &argsKeepAlive, &replyKeepAlive)
-	// 	if ok {
-	// 		if replyKeepAlive.IsDone {
-	// 			break
-	// 		}
 
-	// 	} else {
-	// 		break
-	// 	}
-	// }
+	flag := false
+	// 进入周期心跳汇报（开一个goroutine来做）
+	go func() {
+		for {
+			argsKeepAlive := KeepAliveArgs{}
+			replyKeepAlive := KeepAliveReply{}
+			ok := call("Coordinator.KeepWorkerAlive", &argsKeepAlive, &replyKeepAlive)
+			if ok {
+				if replyKeepAlive.IsDone {
+					// flag = true
+					break
+				}
+			} else {
+				// flag = true
+				break
+			}
+			time.Sleep(time.Second)
+		}
+	}()
+
 	for {
-		argsReqTask := DispatchTaskArgs{}
+		argsReqTask := DispatchTaskArgs{WorkerId: reply.WorkerId}
 		replyReqTask := DispatchTaskReply{}
 		ok := call("Coordinator.DispatchTask", &argsReqTask, &replyReqTask)
-		flag := false
+
 		if ok {
 			switch replyReqTask.TaskType {
 			case "map":
 				okmap := MapHandler(mapf, reducef, &replyReqTask, reply.WorkerId)
 				if !okmap {
-					flag = true
+					// flag = true
 				}
 			case "reduce":
 				okreduce := ReduceHandler(reducef, &replyReqTask, reply.WorkerId)
 				if !okreduce {
-					flag = true
+					// flag = true
 				}
 				// case "break":
 				// 	break
@@ -107,6 +116,10 @@ func Worker(mapf func(string, string) []KeyValue,
 func MapHandler(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string,
 	replyReqTask *DispatchTaskReply, WorkerId int) bool {
+
+	if debugWithCoordinator {
+		fmt.Printf("工作节点%v 获取Map任务%v\n", WorkerId, replyReqTask.TaskId)
+	}
 
 	// 读取Map输入txt的内容
 	file, err := os.Open(replyReqTask.TaskInput[0])
@@ -129,8 +142,8 @@ func MapHandler(mapf func(string, string) []KeyValue,
 
 	// 创建临时文件
 	tmpfile := make([]*os.File, replyReqTask.NReduce)
-	enc := make([]*json.Encoder, len(tmpfile))
-	for i := 0; i < len(tmpfile); i++ {
+	enc := make([]*json.Encoder, replyReqTask.NReduce)
+	for i := 0; i < replyReqTask.NReduce; i++ {
 		tmpfile[i], err = ioutil.TempFile(".", fmt.Sprintf("mr-%v-%v-tmp", replyReqTask.TaskId, i))
 		enc[i] = json.NewEncoder(tmpfile[i])
 	}
@@ -143,23 +156,6 @@ func MapHandler(mapf func(string, string) []KeyValue,
 		enc[toReduce].Encode(kva[i])
 
 	}
-	// for i := 0; i < len(kva); {
-	// 	j := i + 1
-	// 	for j < len(kva) && kva[j].Key == kva[i].Key {
-	// 		j++
-	// 	}
-	// 	values := []string{}
-	// 	for k := i; k < j; k++ {
-	// 		values = append(values, kva[k].Value)
-	// 	}
-	// 	output := reducef(kva[i].Key, values)
-
-	// 	toReduce := ihash(kva[i].Key) % replyReqTask.NReduce
-	// 	// this is the correct format for each line of Reduce output.
-	// 	enc[toReduce].Encode(KeyValue{kva[i].Key, output})
-
-	// 	i = j
-	// }
 
 	// 将临时文件位置加入参数
 	argsSubmitTask := SubmitTaskArgs{WorkerId: WorkerId, TaskId: replyReqTask.TaskId, TaskType: "map"}
@@ -167,6 +163,10 @@ func MapHandler(mapf func(string, string) []KeyValue,
 
 	for i := 0; i < len(tmpfile); i++ {
 		newName := fmt.Sprintf("mr-%v-%v.json", replyReqTask.TaskId, i)
+		_, ferr := os.Stat(newName)
+		if ferr == nil {
+			os.Remove(newName)
+		}
 		os.Rename(tmpfile[i].Name(), newName)
 		argsSubmitTask.TaskOutput = append(argsSubmitTask.TaskOutput, newName)
 		tmpfile[i].Close()
@@ -178,11 +178,20 @@ func MapHandler(mapf func(string, string) []KeyValue,
 
 	// 提交任务
 	ok := call("Coordinator.SubmitTask", &argsSubmitTask, &replySubmitTask)
+
+	if debugWithCoordinator {
+		fmt.Printf("工作节点%v 提交Map任务%v\n", WorkerId, replyReqTask.TaskId)
+	}
+
 	return ok
 }
 
 // Reduce Handler
 func ReduceHandler(reducef func(string, []string) string, replyReqTask *DispatchTaskReply, WorkerId int) bool {
+
+	if debugWithCoordinator {
+		fmt.Printf("工作节点%v 获取Reduce任务%v\n", WorkerId, replyReqTask.TaskId)
+	}
 	// 读取Reduce输入json的内容
 	kva := make([]KeyValue, 0)
 
@@ -194,6 +203,7 @@ func ReduceHandler(reducef func(string, []string) string, replyReqTask *Dispatch
 		file, err := os.Open(filename)
 		if err != nil {
 			log.Fatalf("cannot open %v", filename)
+			return false
 		}
 		dec := json.NewDecoder(file)
 		for {
@@ -238,42 +248,20 @@ func ReduceHandler(reducef func(string, []string) string, replyReqTask *Dispatch
 	replySubmitTask := SubmitTaskReply{}
 
 	newName := fmt.Sprintf("mr-out-%v", replyReqTask.TaskId)
+	_, ferr := os.Stat(newName)
+	if ferr == nil {
+		os.Remove(newName)
+	}
 	os.Rename(tmpfile.Name(), newName)
 	argsSubmitTask.TaskOutput = append(argsSubmitTask.TaskOutput, newName)
 	tmpfile.Close()
 
 	// 提交任务
 	ok := call("Coordinator.SubmitTask", &argsSubmitTask, &replySubmitTask)
-	return ok
-}
-
-//
-// example function to show how to make an RPC call to the coordinator.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func CallExample() {
-
-	// declare an argument structure.
-	args := ExampleArgs{}
-
-	// fill in the argument(s).
-	args.X = 99
-
-	// declare a reply structure.
-	reply := ExampleReply{}
-
-	// send the RPC request, wait for the reply.
-	// the "Coordinator.Example" tells the
-	// receiving server that we'd like to call
-	// the Example() method of struct Coordinator.
-	ok := call("Coordinator.Example", &args, &reply)
-	if ok {
-		// reply.Y should be 100.
-		fmt.Printf("reply.Y %v\n", reply.Y)
-	} else {
-		fmt.Printf("call failed!\n")
+	if debugWithCoordinator {
+		fmt.Printf("工作节点%v 提交Reduce任务%v\n", WorkerId, replyReqTask.TaskId)
 	}
+	return ok
 }
 
 //

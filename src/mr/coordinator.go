@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
+	"regexp"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -16,6 +18,8 @@ var debugCoordinator bool = false
 type Coordinator struct {
 	// Your definitions here.
 	NReduce int
+	IsDone  bool
+	muDone  sync.Mutex
 	// map任务相关状态
 	NInput              int
 	mapTaskList         []string
@@ -46,11 +50,34 @@ func (c *Coordinator) RegisterWorker(args *RegisterWorkerArgs, reply *RegisterWo
 	}
 	// 否则分配新id
 	c.muWorker.Lock()
-	nextId := len(c.workerTimeout)
-	reply.WorkerId = nextId
-	c.workerTimeout = append(c.workerTimeout, time.Now().Unix()+c.globalTimeout)
-	c.workerState = append(c.workerState, 0)
+	// 查询已有worker是否失效
+	nextId := -1
+	for i := 1; i < len(c.workerState); i++ {
+		if c.workerState[i] == 2 {
+			nextId = i
+			reply.WorkerId = nextId
+			c.workerTimeout[nextId] = time.Now().Unix() + c.globalTimeout
+			c.workerState[nextId] = 0
+
+			if debugCoordinator {
+				fmt.Printf("工作节点%v连接\n", nextId)
+			}
+
+			break
+		}
+	}
+	if nextId == -1 {
+		nextId = len(c.workerTimeout)
+		reply.WorkerId = nextId
+		c.workerTimeout = append(c.workerTimeout, time.Now().Unix()+c.globalTimeout)
+		c.workerState = append(c.workerState, 0)
+	}
+
+	if debugCoordinator {
+		fmt.Printf("工作节点%v连接\n", nextId)
+	}
 	c.muWorker.Unlock()
+
 	return nil
 }
 
@@ -58,6 +85,8 @@ func (c *Coordinator) DispatchTask(args *DispatchTaskArgs, reply *DispatchTaskRe
 	// 查询map任务是否全部完成
 	retflag := false
 	c.muMap.Lock()
+	c.muReduce.Lock()
+
 	for i := 0; i < len(c.mapTaskList); i++ {
 		if c.mapTaskState[i] == 0 {
 			c.mapTaskState[i] = 1
@@ -70,55 +99,72 @@ func (c *Coordinator) DispatchTask(args *DispatchTaskArgs, reply *DispatchTaskRe
 			break
 		}
 	}
-	c.muMap.Unlock()
-	if retflag {
-		return nil
-	}
+
 	// 查询reduce任务是否全部完成
-	c.muReduce.Lock()
-	for i := 0; i < len(c.reduceTaskList); i++ {
-		if c.reduceTaskState[i] == 0 && len(c.reduceTaskList[i]) == c.NInput {
-			c.reduceTaskState[i] = 1
-			c.reduceTaskWorker[i] = args.WorkerId
-			reply.TaskId = i
-			reply.TaskType = "reduce"
-			reply.TaskInput = c.reduceTaskList[i]
-			retflag = true
-			break
+	if !retflag {
+		for i := 0; i < len(c.reduceTaskList); i++ {
+			if c.reduceTaskState[i] == 0 && len(c.reduceTaskList[i]) == c.NInput {
+				c.reduceTaskState[i] = 1
+				c.reduceTaskWorker[i] = args.WorkerId
+				reply.TaskId = i
+				reply.TaskType = "reduce"
+				reply.TaskInput = c.reduceTaskList[i]
+				retflag = true
+				break
+			}
 		}
 	}
 	c.muReduce.Unlock()
-	if retflag {
-		return nil
-	}
-	// reply.TaskType = "break"
+	c.muMap.Unlock()
+
 	return nil
 }
 
 func (c *Coordinator) SubmitTask(args *SubmitTaskArgs, reply *SubmitTaskReply) error {
+	// 更新worker状态
+	c.muWorker.Lock()
+	c.muMap.Lock()
+	c.muReduce.Lock()
+
+	// 暂未实现状态1
+	if c.workerState[args.WorkerId] == 1 {
+		c.workerState[args.WorkerId] = 0
+	}
+
 	// 更新任务状态
 	if args.TaskType == "map" {
-		c.muMap.Lock()
 		c.mapTaskIntermediate[args.TaskId] = args.TaskOutput
-		c.mapTaskState[args.TaskId] = 2
-
-		c.muReduce.Lock()
+		if c.mapTaskState[args.TaskId] == 1 {
+			c.mapTaskState[args.TaskId] = 2
+		}
 		for i := 0; i < len(args.TaskOutput); i++ {
 			c.reduceTaskList[i] = append(c.reduceTaskList[i], args.TaskOutput[i])
 		}
-		c.muReduce.Unlock()
-
-		c.muMap.Unlock()
 	} else if args.TaskType == "reduce" {
-		c.muReduce.Lock()
-		c.reduceTaskState[args.TaskId] = 2
-		c.muReduce.Unlock()
+		if c.reduceTaskState[args.TaskId] == 1 {
+			c.reduceTaskState[args.TaskId] = 2
+		}
 	}
-	// 更新worker状态
-	c.muWorker.Lock()
-	c.workerState[args.WorkerId] = 0
+	c.muReduce.Unlock()
+	c.muMap.Unlock()
 	c.muWorker.Unlock()
 
+	return nil
+}
+
+// worker向coordiantor发送请求，coordinator更新worker的超时timestamp
+func (c *Coordinator) KeepWorkerAlive(args *KeepAliveArgs, reply *KeepAliveReply) error {
+	if c.Done() {
+		reply.IsDone = true
+		return nil
+	}
+
+	c.muWorker.Lock()
+	workerId := args.WorkerId
+	c.workerTimeout[workerId] = time.Now().Unix() + c.globalTimeout
+	c.muWorker.Unlock()
+
+	reply.IsDone = c.Done()
 	return nil
 }
 
@@ -145,8 +191,14 @@ func (c *Coordinator) server() {
 func (c *Coordinator) Done() bool {
 	ret := true
 
-	// Your code here.
-	ss := make([]int, 10)
+	c.muDone.Lock()
+	defer c.muDone.Unlock()
+
+	if c.IsDone {
+		return true
+	}
+
+	c.muMap.Lock()
 	c.muReduce.Lock()
 	for i := 0; i < len(c.reduceTaskState); i++ {
 		state := c.reduceTaskState[i]
@@ -154,14 +206,19 @@ func (c *Coordinator) Done() bool {
 			ret = false
 			// break
 		}
-		ss[i] = state
 	}
-
 	if debugCoordinator {
-		fmt.Printf("任务完成状态: %v Reduce状态: %v\n", ret, ss)
+		fmt.Printf("任务完成状态: %v 节点状态: %v Map状态: %v Map节点: %v Reduce状态: %v Reduce节点: %v\n", ret, c.workerState, c.mapTaskState, c.mapTaskWorker, c.reduceTaskState, c.reduceTaskWorker)
+		// fmt.Printf("任务完成状态: %v Map状态: %v Map节点: %v Worker超时: %v\n", ret, c.mapTaskState, c.mapTaskWorker, c.workerTimeout)
 	}
 
 	c.muReduce.Unlock()
+	c.muMap.Unlock()
+
+	if ret {
+		c.IsDone = true
+	}
+
 	return ret
 }
 
@@ -171,37 +228,121 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{NReduce: nReduce, globalTimeout: 10, mapTaskList: files, NInput: len(files)}
-	c.mapTaskWorker = make([]int, c.NInput)
+	c := Coordinator{NReduce: nReduce, globalTimeout: 5, mapTaskList: files, NInput: len(files), IsDone: false}
+
 	c.mapTaskState = make([]int, c.NInput)
+	c.mapTaskWorker = make([]int, c.NInput)
 	c.mapTaskIntermediate = make([][]string, c.NInput)
+
 	c.reduceTaskList = make([][]string, nReduce)
 	c.reduceTaskState = make([]int, nReduce)
 	c.reduceTaskWorker = make([]int, nReduce)
-	// Your code here.
+
+	c.workerState = append(c.workerState, 2)
+	c.workerTimeout = append(c.workerTimeout, time.Now().Unix())
+
+	for i := 0; i < c.NInput; i++ {
+		c.mapTaskWorker[i] = -1
+	}
+
+	for i := 0; i < c.NReduce; i++ {
+		c.reduceTaskWorker[i] = -1
+	}
+
 	if debugCoordinator {
 		fmt.Printf("Coordinator created with %v map tasks!\n", len(c.mapTaskList))
 	}
-	// read each input file
+	// 开始心跳检测
+	go func() {
+		for {
+			cIsDone := false
+			c.muDone.Lock()
+			cIsDone = c.IsDone
+			c.muDone.Unlock()
+
+			if cIsDone {
+				break
+			}
+
+			c.muWorker.Lock()
+			c.muMap.Lock()
+			c.muReduce.Lock()
+			currTimestamp := time.Now().Unix()
+
+			if debugCoordinator {
+				// fmt.Printf("当前节点连接状态: %v 当前时间: %v 当前节点超时时间: % v\n", c.workerState, currTimestamp, c.workerTimeout)
+				fmt.Printf("当前节点连接状态: %v 当前Map任务状态: %v 当前Reduce任务状态: % v\n", c.workerState, c.mapTaskState, c.reduceTaskState)
+			}
+
+			for i := 1; i < len(c.workerTimeout); i++ {
+				// 判断当前已连接的节点是否超时
+				if c.workerState[i] == 2 || currTimestamp >= c.workerTimeout[i] {
+
+					if debugCoordinator {
+						fmt.Printf("工作节点%v断开\n", i)
+					}
+
+					c.workerState[i] = 2
+					// 遍历map任务进行处理
+
+					for j := 0; j < len(c.mapTaskState); j++ {
+						// 这里不需要对已完成的map进行处理
+						if c.mapTaskWorker[j] == i && c.mapTaskState[j] != 2 {
+
+							c.mapTaskState[j] = 0
+							c.mapTaskWorker[j] = -1
+
+							if debugCoordinator {
+								fmt.Printf("Map任务 %v重置\n", j)
+							}
+
+							for _, filename := range c.mapTaskIntermediate[j] {
+								err := os.Remove(filename)
+								if err != nil {
+									if debugCoordinator {
+										fmt.Println("中间文件无法删除，正在使用中?")
+									}
+								}
+							}
+
+							c.mapTaskIntermediate[j] = c.mapTaskIntermediate[j][0:0]
+
+							// 还需要删除reduce中该map对应的内容
+							pattern := ".*mr-" + strconv.Itoa(j) + "-.*"
+							mapfilter, _ := regexp.Compile(pattern)
+							for k := 0; k < len(c.reduceTaskList); k++ {
+								for ki := 0; ki < len(c.reduceTaskList[k]); ki++ {
+									if mapfilter.MatchString(c.reduceTaskList[k][ki]) {
+										// 删除对应元素
+										c.reduceTaskList[k] = append(c.reduceTaskList[k][:ki], c.reduceTaskList[k][ki+1:]...)
+									}
+								}
+							}
+						}
+					}
+
+					// 遍历reduce任务进行处理
+					for j := 0; j < c.NReduce; j++ {
+						if c.reduceTaskWorker[j] == i {
+							// 对于已经完成的reduce任务不做处理
+							if c.reduceTaskState[j] == 2 {
+								continue
+							}
+							c.reduceTaskState[j] = 0
+						}
+					}
+
+				}
+			}
+
+			c.muReduce.Unlock()
+			c.muMap.Unlock()
+			c.muWorker.Unlock()
+
+			time.Sleep(time.Duration(c.globalTimeout) * time.Second)
+		}
+	}()
 
 	c.server()
 	return &c
 }
-
-// worker向coordiantor发送请求，coordinator更新worker的超时timestamp
-// func (c *Coordinator) KeepWorkerAlive(args *KeepAliveArgs, reply *KeepAliveReply) error {
-// 	if c.Done() {
-// 		reply.IsDone = true
-// 		return nil
-// 	}
-// 	c.muworkerTimeout.Lock()
-// 	workerId := args.Id
-// 	c.workerTimeout[workerId] = time.Now().Unix() + c.globalTimeout
-// 	// 当前机器为空闲状态则分配任务
-// 	if c.workerState[workerId] == 0 {
-
-// 	}
-// 	c.muworkerTimeout.Unlock()
-// 	reply.IsDone = false
-// 	return nil
-// }
