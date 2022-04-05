@@ -14,6 +14,7 @@ import (
 )
 
 var debugCoordinator bool = false
+var debugConnect bool = false
 
 type Coordinator struct {
 	// Your definitions here.
@@ -59,7 +60,7 @@ func (c *Coordinator) RegisterWorker(args *RegisterWorkerArgs, reply *RegisterWo
 			c.workerTimeout[nextId] = time.Now().Unix() + c.globalTimeout
 			c.workerState[nextId] = 0
 
-			if debugCoordinator {
+			if debugConnect {
 				fmt.Printf("工作节点%v连接\n", nextId)
 			}
 
@@ -73,7 +74,7 @@ func (c *Coordinator) RegisterWorker(args *RegisterWorkerArgs, reply *RegisterWo
 		c.workerState = append(c.workerState, 0)
 	}
 
-	if debugCoordinator {
+	if debugConnect {
 		fmt.Printf("工作节点%v连接\n", nextId)
 	}
 	c.muWorker.Unlock()
@@ -228,7 +229,7 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{NReduce: nReduce, globalTimeout: 5, mapTaskList: files, NInput: len(files), IsDone: false}
+	c := Coordinator{NReduce: nReduce, globalTimeout: 10, mapTaskList: files, NInput: len(files), IsDone: false}
 
 	c.mapTaskState = make([]int, c.NInput)
 	c.mapTaskWorker = make([]int, c.NInput)
@@ -278,7 +279,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 				// 判断当前已连接的节点是否超时
 				if c.workerState[i] == 2 || currTimestamp >= c.workerTimeout[i] {
 
-					if debugCoordinator {
+					if debugConnect {
 						fmt.Printf("工作节点%v断开\n", i)
 					}
 
@@ -292,14 +293,14 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 							c.mapTaskState[j] = 0
 							c.mapTaskWorker[j] = -1
 
-							if debugCoordinator {
+							if debugConnect {
 								fmt.Printf("Map任务 %v重置\n", j)
 							}
 
 							for _, filename := range c.mapTaskIntermediate[j] {
 								err := os.Remove(filename)
 								if err != nil {
-									if debugCoordinator {
+									if debugConnect {
 										fmt.Println("中间文件无法删除，正在使用中?")
 									}
 								}
