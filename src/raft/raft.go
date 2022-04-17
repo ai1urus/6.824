@@ -30,11 +30,12 @@ import (
 	"6.824/labrpc"
 )
 
+// Log 开关
+var ApplyMsgLog bool = true
 var RequestVoteLog bool = false
 var AppendEntriesLog bool = false
 var LeaderChangeLog bool = false
 var TimeoutLog bool = false
-var ApplyMsgLog bool = true
 
 //
 // as each Raft peer becomes aware that successive log entries are
@@ -211,47 +212,29 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = false
-	// args.Term < rf.currentTerm 则直接返回
-	switch {
-	case args.Term > rf.currentTerm:
+	// args.Term < rf.currentTerm 直接返回
+	if args.Term < rf.currentTerm {
+		return
+	}
+	// args.Term > rf.currentTerm 转为follower
+	if args.Term > rf.currentTerm {
 		rf.state = FollowerState
 		rf.votedFor = -1
 		rf.currentTerm = args.Term
-		fallthrough
-	case args.Term == rf.currentTerm:
-		// 首先判断，只有当前节点没有投票或已投票给candidate时才可能返回true
-		if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
-			// 判断log最后一个entry的term
-			switch {
-			case len(rf.log) == 0:
-				if RequestVoteLog {
-					fmt.Printf("%v(任期%v)同意为 %v(任期%v)投票\n", rf.me, rf.currentTerm, args.CandidateId, args.Term)
-				}
-				rf.unsetTimeout()
+	}
 
-				reply.VoteGranted = true
-				rf.votedFor = args.CandidateId
-			case args.LastLogTerm > rf.log[len(rf.log)-1].Term:
-				fallthrough
-			case args.LastLogTerm == rf.log[len(rf.log)-1].Term && args.LastLogIndex >= len(rf.log)-1:
-				// 可以投票
-				if RequestVoteLog {
-					fmt.Printf("%v(任期%v)同意为 %v(任期%v)投票\n", rf.me, rf.currentTerm, args.CandidateId, args.Term)
-				}
-				rf.unsetTimeout()
+	// 只有当前peer没有投票或已投票给candidate时才可能返回true
+	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
+		// candidate的log至少和当前log一样新, 允许投票
+		if lastLogIndex := len(rf.log) - 1; args.LastLogTerm > rf.log[lastLogIndex].Term ||
+			args.LastLogTerm == rf.log[lastLogIndex].Term && args.LastLogIndex >= lastLogIndex {
+			if RequestVoteLog {
+				fmt.Printf("[VOTE] peer(%v term %v) vote for candidate(%v term %v)\n", rf.me, rf.currentTerm, args.CandidateId, args.Term)
+			}
+			rf.resetTimeout()
 
-				reply.VoteGranted = true
-				rf.votedFor = args.CandidateId
-			}
-		}
-		// All servers rule 1
-		fmt.Printf("peer %v lastApplied %v commitIndex %v\n", rf.me, rf.lastApplied, rf.commitIndex)
-		for rf.lastApplied < rf.commitIndex {
-			rf.lastApplied++
-			if true {
-				fmt.Printf("[APPLY] %v apply 条目 %v\n", rf.me, rf.log[rf.lastApplied])
-			}
-			rf.applyCh <- ApplyMsg{CommandValid: true, Command: rf.log[rf.lastApplied].Command, CommandIndex: rf.lastApplied}
+			reply.VoteGranted = true
+			rf.votedFor = args.CandidateId
 		}
 	}
 }
@@ -275,12 +258,14 @@ type AppendEntriesReply struct {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
 	defer func() {
-		if ApplyMsgLog {
+		if AppendEntriesLog {
 			fmt.Printf("%v 返回 Append回复 %v log %v lastApplied %v commitIndex %v\n", rf.me, *reply, rf.log, rf.lastApplied, rf.commitIndex)
 		}
 	}()
-	if ApplyMsgLog {
+
+	if AppendEntriesLog {
 		fmt.Printf("%v 收到 Append请求 %v\n", rf.me, *args)
 	}
 
@@ -291,7 +276,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 	// 重置超时计时器
-	rf.unsetTimeout()
+	rf.resetTimeout()
 	reply.Success = true
 	// term比当前大转为follower
 	if args.Term > rf.currentTerm {
@@ -349,18 +334,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 	}
 
-	// All servers 规则1, 是不是应该起一个goroutine单独执行这个操作？
-	// oldLastApplied := rf.lastApplied
+	// [All servers] rule 1 是否应该起一个goroutine单独执行本操作?
 	for rf.lastApplied < rf.commitIndex {
 		rf.lastApplied++
-		if true {
-			fmt.Printf("[APPLY] %v apply 条目 %v\n", rf.me, rf.log[rf.lastApplied])
+		if ApplyMsgLog {
+			fmt.Printf("[APPLY] peer(%v term %v) apply entry %v\n", rf.me, rf.currentTerm, rf.log[rf.lastApplied])
 		}
 		rf.applyCh <- ApplyMsg{CommandValid: true, Command: rf.log[rf.lastApplied].Command, CommandIndex: rf.lastApplied}
 	}
-	// if ApplyMsgLog {
-	// 	fmt.Printf("%v(任期%v) 更新 lastApplied %v 为 commitIndex %v\n", rf.me, rf.currentTerm, oldLastApplied, rf.commitIndex)
-	// }
 }
 
 //
@@ -564,7 +545,7 @@ func (rf *Raft) setTimeout() {
 	atomic.StoreInt32(&rf.electionTimer, 1)
 }
 
-func (rf *Raft) unsetTimeout() {
+func (rf *Raft) resetTimeout() {
 	atomic.StoreInt32(&rf.electionTimer, 0)
 }
 
@@ -594,7 +575,7 @@ func (rf *Raft) ticker() {
 		if rf.isTimeout() {
 			// follower 转为 candidate
 			rf.mu.Lock()
-			rf.unsetTimeout()
+			rf.resetTimeout()
 			rf.state = CandidateState
 			rf.votedFor = rf.me
 			rf.currentTerm++
