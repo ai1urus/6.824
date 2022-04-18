@@ -30,14 +30,14 @@ import (
 	"6.824/labrpc"
 )
 
-var ElectionLog bool = true
+var ElectionLog bool = false
 var AppendEntriesLog bool = false
 var AppendChangeLog bool = false
 var ApplyMsgLog bool = false
 var ApplyCheckLog bool = false
 var ApplyMsgLiteLog bool = false
 var TimeoutLog bool = false
-var StartLog bool = false
+var StartLog bool = true
 
 //
 // as each Raft peer becomes aware that successive log entries are
@@ -497,7 +497,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	replyCount := int32(1)
 	successCount := int32(1)
-	majorCount := int32(1 + len(rf.peers)>>1)
+	// majorCount := int32(1 + len(rf.peers)>>1)
 	// Your code here (2B).
 	rf.mu.Lock()
 	if rf.state == LeaderState {
@@ -523,23 +523,23 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// }
 	rf.mu.Unlock()
 
-	if isLeader {
-		for tmpCount := atomic.LoadInt32(&successCount); int32(tmpCount) < majorCount; tmpCount = atomic.LoadInt32(&successCount) {
-			time.Sleep(time.Duration(10) * time.Millisecond)
-			if StartLog {
-				fmt.Printf("[START CHECK] leader(%v term %v) replyCount %v/%v\n",
-					rf.me, rf.currentTerm, replyCount, majorCount)
-			}
-			if tmpReplyCount := atomic.LoadInt32(&replyCount); tmpReplyCount == int32(len(rf.peers)) {
-				break
-			}
-		}
-		if StartLog {
-			fmt.Printf("[START REPLY] leader(%v term %v) Start request: %v | reply count %v\n",
-				rf.me, rf.currentTerm, rf.currentTerm, replyCount)
-			// rf.me, rf.currentTerm, Entry{Term: rf.currentTerm, Command: command}, replyCount)
-		}
-	}
+	// if isLeader {
+	// 	for tmpCount := atomic.LoadInt32(&successCount); int32(tmpCount) < majorCount; tmpCount = atomic.LoadInt32(&successCount) {
+	// 		time.Sleep(time.Duration(10) * time.Millisecond)
+	// 		if StartLog {
+	// 			fmt.Printf("[START CHECK] leader(%v term %v) replyCount %v/%v\n",
+	// 				rf.me, rf.currentTerm, replyCount, majorCount)
+	// 		}
+	// 		if tmpReplyCount := atomic.LoadInt32(&replyCount); tmpReplyCount == int32(len(rf.peers)) {
+	// 			break
+	// 		}
+	// 	}
+	// 	if StartLog {
+	// 		fmt.Printf("[START REPLY] leader(%v term %v) Start request: %v | reply count %v\n",
+	// 			rf.me, rf.currentTerm, rf.currentTerm, replyCount)
+	// 		// rf.me, rf.currentTerm, Entry{Term: rf.currentTerm, Command: command}, replyCount)
+	// 	}
+	// }
 
 	return index, term, isLeader
 }
