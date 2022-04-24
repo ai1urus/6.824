@@ -125,6 +125,15 @@ func TestManyElections2A(t *testing.T) {
 	cfg.end()
 }
 
+func Benchmark2A(b *testing.B) {
+	var t *testing.T
+	for i := 0; i < 100; i++ {
+		TestInitialElection2A(t)
+		TestReElection2A(t)
+		TestManyElections2A(t)
+	}
+}
+
 func TestBasicAgree2B(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)
