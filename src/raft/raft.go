@@ -250,19 +250,22 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 }
 
 type AppendEntriesArgs struct {
-	Term         int
-	LeaderId     int // so follower can redirect clients ？ 如何实现
+	Term     int
+	LeaderId int // so follower can redirect clients ？ 如何实现
+
 	PrevLogIndex int
+	PrevLogTerm  int
 
-	PrevLogTerm int
-	Entries     []Entry
-
+	Entries      []Entry
 	LeaderCommit int
 }
 
 type AppendEntriesReply struct {
 	Term    int
 	Success bool
+
+	ConflictIndex int
+	ConflictTerm  int
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -304,8 +307,27 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	// 当前log长度小于PrevLogIndex或对应index的term不同，则返回false
 	lastLogIndex := len(rf.log) - 1
-	if lastLogIndex < args.PrevLogIndex || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+	if lastLogIndex < args.PrevLogIndex {
 		reply.Success = false
+		reply.ConflictIndex = len(rf.log)
+		reply.ConflictTerm = -1
+		return
+	}
+
+	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+		reply.Success = false
+		reply.ConflictTerm = rf.log[args.PrevLogIndex].Term
+		// 二分查找conflictTerm的的一个index
+		l, r := -1, len(rf.log)
+		for l+1 < r {
+			mid := (l + r) >> 1
+			if rf.log[mid].Term < reply.ConflictTerm {
+				l = mid
+			} else {
+				r = mid
+			}
+		}
+		reply.ConflictIndex = r
 		return
 	}
 
@@ -425,8 +447,11 @@ func (rf *Raft) doRequestVote(voteCount *int32, server int, term, candidateId, l
 
 func (rf *Raft) doAppendEntries(replyCount *int32, successCount *int32, server, term, leaderId, prevLogIndex, prevLogTerm, leaderCommit int, entries []Entry) {
 	// Leaders rule 3
+	rf.mu.Lock()
 	if prevLogIndex >= rf.nextIndex[server] {
-		new_entries := rf.log[rf.nextIndex[server] : prevLogIndex+1]
+		new_entries := make([]Entry, prevLogIndex+1-rf.nextIndex[server])
+		copy(new_entries, rf.log[rf.nextIndex[server]:prevLogIndex+1])
+		// new_entries := rf.log[rf.nextIndex[server] : prevLogIndex+1]
 		new_entries = append(new_entries, entries...)
 		if AppendChangeLog {
 			fmt.Printf("[APPEND CHANGE] leader(%v term %v) append to peer(%v) : nextIndex %v | prevLogIndex+1 %v | entries %v -> %v\n", rf.me, rf.currentTerm, server, rf.nextIndex[server], prevLogIndex+1, entries, new_entries)
@@ -435,6 +460,7 @@ func (rf *Raft) doAppendEntries(replyCount *int32, successCount *int32, server, 
 		prevLogIndex = rf.nextIndex[server] - 1
 		prevLogTerm = rf.log[prevLogIndex].Term
 	}
+	rf.mu.Unlock()
 
 	args := &AppendEntriesArgs{term, leaderId, prevLogIndex, prevLogTerm, entries, leaderCommit}
 	reply := &AppendEntriesReply{}
@@ -459,9 +485,32 @@ func (rf *Raft) doAppendEntries(replyCount *int32, successCount *int32, server, 
 			rf.matchIndex[server] = prevLogIndex + len(entries)
 		} else {
 			// 如果失败，则尝试向前同步。indefinite retry通过heartbeats实现
-			if rf.nextIndex[server] > 1 {
-				rf.nextIndex[server]--
+			// if rf.nextIndex[server] > 1 {
+			// 	rf.nextIndex[server]--
+			// }
+
+			// 二分查找conflictTerm的的一个index
+			l, r := -1, len(rf.log)
+			for l+1 < r {
+				mid := (l + r) >> 1
+				if rf.log[mid].Term <= reply.ConflictTerm {
+					l = mid
+				} else {
+					r = mid
+				}
 			}
+
+			foundTerm := false
+			if r > 0 && r < len(rf.log) {
+				foundTerm = true
+			}
+
+			if foundTerm {
+				rf.nextIndex[server] = r
+			} else {
+				rf.nextIndex[server] = reply.ConflictIndex
+			}
+
 		}
 	}
 }
@@ -651,7 +700,7 @@ func (rf *Raft) broadcast(replyCount *int32, successCount *int32, prevLogIndex i
 }
 
 // 心跳同步例程，只有当成为leader时启动一次
-func (rf *Raft) sendHeartbeats() {
+func (rf *Raft) pacemaker() {
 	for start := <-rf.heartbeatsCh; start; start = <-rf.heartbeatsCh {
 		for endHeartbeats := false; !rf.killed(); {
 			time.Sleep(time.Duration(100) * time.Millisecond)
@@ -759,7 +808,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.readPersist(persister.ReadRaftState())
 	// start ticker goroutine to start elections
 	go rf.ticker()
-	go rf.sendHeartbeats()
+	go rf.pacemaker()
 	go rf.applier()
 
 	return rf

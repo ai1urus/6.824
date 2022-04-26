@@ -832,6 +832,8 @@ func TestFigure82C(t *testing.T) {
 
 	cfg.one(rand.Int(), 1, true)
 
+	fmt.Println("pass one 1")
+
 	nup := servers
 	for iters := 0; iters < 1000; iters++ {
 		leader := -1
@@ -867,6 +869,8 @@ func TestFigure82C(t *testing.T) {
 		}
 	}
 
+	fmt.Println("pass start 1000")
+
 	for i := 0; i < servers; i++ {
 		if cfg.rafts[i] == nil {
 			cfg.start1(i, cfg.applier)
@@ -875,6 +879,8 @@ func TestFigure82C(t *testing.T) {
 	}
 
 	cfg.one(rand.Int(), servers, true)
+
+	fmt.Println("pass one 1")
 
 	cfg.end()
 }
