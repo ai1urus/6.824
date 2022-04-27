@@ -681,6 +681,7 @@ func (rf *Raft) raiseVote(term, lastLogIndex, lastLogTerm int) {
 			rf.applyStartCh <- true
 		}
 		rf.mu.Unlock()
+		// time.Sleep(time.Duration(10) * time.Millisecond)
 	}
 
 	if ElectionLog {
@@ -721,6 +722,7 @@ func (rf *Raft) pacemaker() {
 				}
 			}
 			rf.mu.Unlock()
+
 		}
 	}
 }
@@ -741,6 +743,28 @@ func (rf *Raft) applier() {
 			// 找到一个index，使得有至少一半matchIndex大于等于index，同时使index最大
 			// 排序+二分查找
 			majorCount := 1 + len(rf.peers)>>1
+			// tmpMatchIndex := len(rf.log) - 1
+			// canUpdate := false
+			// for tmpMatchIndex > rf.commitIndex {
+			// 	tmpCount := 0
+			// 	for i := 0; i < len(rf.peers); i++ {
+			// 		if rf.matchIndex[i] >= tmpMatchIndex {
+			// 			tmpCount++
+			// 		}
+			// 	}
+			// 	if tmpCount >= majorCount && rf.log[tmpMatchIndex].Term == rf.currentTerm {
+			// 		canUpdate = true
+			// 		break
+			// 	}
+			// 	if rf.log[tmpMatchIndex].Term < rf.currentTerm {
+			// 		break
+			// 	}
+			// }
+
+			// if canUpdate {
+			// 	rf.commitIndex = tmpMatchIndex
+			// }
+
 			tmpMatchIndex := make([]int, 0)
 			tmpMatchIndex = append(tmpMatchIndex, rf.matchIndex...)
 			sort.Ints(tmpMatchIndex)
@@ -751,9 +775,13 @@ func (rf *Raft) applier() {
 					rf.me, rf.currentTerm, rf.nextIndex, rf.matchIndex, maxMatchIndex, rf.commitIndex)
 			}
 			//
-			if rf.commitIndex < maxMatchIndex {
+			for maxMatchIndex > rf.commitIndex && rf.log[maxMatchIndex].Term == rf.currentTerm {
+				maxMatchIndex--
+			}
+			if rf.commitIndex < maxMatchIndex && rf.log[maxMatchIndex].Term == rf.currentTerm {
 				rf.commitIndex = maxMatchIndex
 			}
+
 			// if ApplyMsgLog {
 			// 	fmt.Printf("[APPLY CHECK] leader(%v term %v) : lastApplied %v | commitIndex %v\n", rf.me, rf.currentTerm, rf.lastApplied, rf.commitIndex)
 			// }
