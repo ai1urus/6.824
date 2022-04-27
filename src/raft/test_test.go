@@ -832,7 +832,7 @@ func TestFigure82C(t *testing.T) {
 
 	cfg.one(rand.Int(), 1, true)
 
-	fmt.Println("pass one 1")
+	// fmt.Println("pass one 1")
 
 	nup := servers
 	for iters := 0; iters < 1000; iters++ {
@@ -869,7 +869,7 @@ func TestFigure82C(t *testing.T) {
 		}
 	}
 
-	fmt.Println("pass start 1000")
+	// fmt.Println("pass start 1000")
 
 	for i := 0; i < servers; i++ {
 		if cfg.rafts[i] == nil {
@@ -880,7 +880,7 @@ func TestFigure82C(t *testing.T) {
 
 	cfg.one(rand.Int(), servers, true)
 
-	fmt.Println("pass one 1")
+	// fmt.Println("pass one 1")
 
 	cfg.end()
 }
