@@ -660,7 +660,7 @@ func (rf *Raft) raiseVote(term, lastLogIndex, lastLogTerm int) {
 	// For 无间隔循环
 	for endElection := false; !endElection; {
 		rf.mu.Lock()
-		if rf.currentTerm > term {
+		if rf.currentTerm > term || rf.state == FollowerState {
 			endElection = true
 		} else if voteCount >= majority {
 			// candidate 转为 leader
@@ -704,7 +704,6 @@ func (rf *Raft) broadcast(replyCount *int32, successCount *int32, prevLogIndex i
 func (rf *Raft) pacemaker() {
 	for start := <-rf.heartbeatsCh; start; start = <-rf.heartbeatsCh {
 		for endHeartbeats := false; !rf.killed(); {
-			time.Sleep(time.Duration(100) * time.Millisecond)
 
 			beatsCount := int32(1)
 			replyCount := int32(1)
@@ -722,7 +721,7 @@ func (rf *Raft) pacemaker() {
 				}
 			}
 			rf.mu.Unlock()
-
+			time.Sleep(time.Duration(100) * time.Millisecond)
 		}
 	}
 }
@@ -775,7 +774,7 @@ func (rf *Raft) applier() {
 					rf.me, rf.currentTerm, rf.nextIndex, rf.matchIndex, maxMatchIndex, rf.commitIndex)
 			}
 			//
-			for maxMatchIndex > rf.commitIndex && rf.log[maxMatchIndex].Term == rf.currentTerm {
+			for maxMatchIndex > rf.commitIndex && rf.log[maxMatchIndex].Term != rf.currentTerm {
 				maxMatchIndex--
 			}
 			if rf.commitIndex < maxMatchIndex && rf.log[maxMatchIndex].Term == rf.currentTerm {
