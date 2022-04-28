@@ -1,0 +1,25 @@
+Test (2C): Figure 8 (unreliable) ...
+--- FAIL: TestFigure8Unreliable2C (50.21s)
+    config.go:613: one(1324) failed to reach agreement(timeout)
+FAIL
+exit status 1
+FAIL	6.824/raft	50.241s
+Test (2C): Figure 8 (unreliable) ...
+  ... Passed --  40.4  5 11728 29417750   80
+PASS
+ok  	6.824/raft	40.425s
+Test (2C): Figure 8 (unreliable) ...
+--- FAIL: TestFigure8Unreliable2C (42.87s)
+    config.go:613: one(4775) failed to reach agreement(timeout)
+FAIL
+exit status 1
+FAIL	6.824/raft	42.897s
+Test (2C): Figure 8 (unreliable) ...
+  ... Passed --  37.5  5 10288 21547060  130
+PASS
+ok  	6.824/raft	37.515s
+Test (2C): Figure 8 (unreliable) ...
+  ... Passed --  37.8  5 9100 18266522   93
+PASS
+ok  	6.824/raft	37.882s
+Test (2C): Figure 8 (unreliable) ...

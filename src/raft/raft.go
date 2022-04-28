@@ -108,6 +108,22 @@ type Raft struct {
 	applyCond     *sync.Cond
 }
 
+func max(a, b int) int {
+	if a > b {
+		return a
+	} else {
+		return b
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	} else {
+		return b
+	}
+}
+
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (term int, isleader bool) {
@@ -423,14 +439,21 @@ func (rf *Raft) doAppendEntries(server, term, leaderId, prevLogIndex, prevLogTer
 	ok := rf.sendAppendEntries(server, args, reply)
 
 	if ok {
+
 		needApply := false
 		defer func() {
 			if needApply {
 				rf.applyStartCh <- true
 			}
 		}()
+
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
+
+		if args.Term != rf.currentTerm || rf.state != LeaderState {
+			return
+		}
+
 		defer rf.persist()
 
 		if reply.Term > rf.currentTerm {
@@ -438,29 +461,29 @@ func (rf *Raft) doAppendEntries(server, term, leaderId, prevLogIndex, prevLogTer
 			rf.votedFor = -1
 			rf.currentTerm = reply.Term
 		} else if reply.Success {
-			rf.nextIndex[server] = prevLogIndex + len(entries) + 1
-			rf.matchIndex[server] = prevLogIndex + len(entries)
+			rf.nextIndex[server] = max(prevLogIndex+len(entries)+1, rf.matchIndex[server])
+			rf.matchIndex[server] = max(prevLogIndex+len(entries), rf.matchIndex[server])
 
-			majorCount := 1 + len(rf.peers)>>1
-			tmpMatchIndex := rf.matchIndex[rf.me]
+			matchIndex := rf.matchIndex[rf.me]
 
-			for ; tmpMatchIndex > rf.commitIndex; tmpMatchIndex-- {
-				tmpCount := 0
-
-				for i := 0; i < len(rf.matchIndex); i++ {
-					if rf.matchIndex[i] >= tmpMatchIndex {
-						tmpCount++
+			for ; matchIndex > rf.commitIndex && rf.log[matchIndex].Term == rf.currentTerm; matchIndex-- {
+				cnt := 0
+				for i := 0; i < len(rf.peers); i++ {
+					if rf.matchIndex[i] >= matchIndex {
+						cnt++
 					}
 				}
-
-				if tmpCount >= majorCount && rf.log[tmpMatchIndex].Term == rf.currentTerm {
-					if rf.commitIndex = tmpMatchIndex; rf.commitIndex > rf.lastApplied {
-						needApply = true
-					}
-					break
-				} else if rf.log[tmpMatchIndex].Term < rf.currentTerm {
+				if cnt > len(rf.peers)>>1 {
 					break
 				}
+			}
+
+			if matchIndex > rf.commitIndex && rf.log[matchIndex].Term == rf.currentTerm {
+				rf.commitIndex = matchIndex
+			}
+
+			if rf.commitIndex > rf.lastApplied {
+				needApply = true
 			}
 		} else {
 			// 二分查找conflictTerm的的一个index
@@ -571,7 +594,7 @@ func (rf *Raft) ticker() {
 	for !rf.killed() {
 		// random sleep
 		rand.Seed(time.Now().Unix() + int64(rf.me))
-		electionTimeout := 300 + rand.Intn(150)
+		electionTimeout := 400 + rand.Intn(200)
 		time.Sleep(time.Duration(electionTimeout) * time.Millisecond)
 
 		// timeout judgement
@@ -620,6 +643,10 @@ func (rf *Raft) startElection(term, lastLogIndex, lastLogTerm int) {
 				}()
 				defer rf.mu.Unlock()
 				defer rf.persist()
+
+				if args.Term != rf.currentTerm || rf.state != CandidateState {
+					return
+				}
 
 				if reply.Term > rf.currentTerm {
 					rf.state = FollowerState

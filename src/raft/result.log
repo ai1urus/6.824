@@ -1,0 +1,88 @@
+Test (2C): Figure 8 ...
+Pass first one agreement.
+Finish 1000 loss.
+All peer reconnect, wait for one.
+Last one finished.
+  ... Passed --  29.8  5  716  148214   37
+PASS
+ok  	6.824/raft	29.813s
+Test (2C): Figure 8 ...
+Pass first one agreement.
+Finish 1000 loss.
+All peer reconnect, wait for one.
+Last one finished.
+  ... Passed --  32.8  5  800  164510   42
+PASS
+ok  	6.824/raft	32.805s
+Test (2C): Figure 8 ...
+Pass first one agreement.
+Finish 1000 loss.
+All peer reconnect, wait for one.
+Last one finished.
+  ... Passed --  32.6  5  820  167491   41
+PASS
+ok  	6.824/raft	32.657s
+Test (2C): Figure 8 ...
+Pass first one agreement.
+Finish 1000 loss.
+All peer reconnect, wait for one.
+Last one finished.
+  ... Passed --  35.2  5  868  180557   47
+PASS
+ok  	6.824/raft	35.199s
+Test (2C): Figure 8 ...
+Pass first one agreement.
+Finish 1000 loss.
+All peer reconnect, wait for one.
+Last one finished.
+  ... Passed --  33.7  5  840  175490   45
+PASS
+ok  	6.824/raft	33.772s
+Test (2C): Figure 8 ...
+Pass first one agreement.
+Finish 1000 loss.
+All peer reconnect, wait for one.
+Last one finished.
+  ... Passed --  24.1  5  600  124597   29
+PASS
+ok  	6.824/raft	24.128s
+Test (2C): Figure 8 ...
+Pass first one agreement.
+Finish 1000 loss.
+All peer reconnect, wait for one.
+Last one finished.
+  ... Passed --  28.1  5  712  145661   38
+PASS
+ok  	6.824/raft	28.119s
+Test (2C): Figure 8 ...
+Pass first one agreement.
+Finish 1000 loss.
+All peer reconnect, wait for one.
+Last one finished.
+  ... Passed --  30.9  5  744  153545   39
+PASS
+ok  	6.824/raft	30.946s
+Test (2C): Figure 8 ...
+Pass first one agreement.
+Finish 1000 loss.
+All peer reconnect, wait for one.
+Last one finished.
+  ... Passed --  32.4  5  784  163603   39
+PASS
+ok  	6.824/raft	32.483s
+Test (2C): Figure 8 ...
+Pass first one agreement.
+Finish 1000 loss.
+All peer reconnect, wait for one.
+Last one finished.
+  ... Passed --  30.1  5  804  170542   38
+PASS
+ok  	6.824/raft	30.143s
+Test (2C): Figure 8 ...
+Pass first one agreement.
+Finish 1000 loss.
+All peer reconnect, wait for one.
+Last one finished.
+  ... Passed --  31.1  5  752  156605   40
+PASS
+ok  	6.824/raft	31.139s
