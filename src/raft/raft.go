@@ -432,7 +432,7 @@ func (rf *Raft) doRequestVote(voteCount *int32, server int, term, candidateId, l
 	}
 }
 
-func (rf *Raft) doAppendEntries(replyCount *int32, successCount *int32, server, term, leaderId, prevLogIndex, prevLogTerm, leaderCommit int, entries []Entry) {
+func (rf *Raft) doAppendEntries(server, term, leaderId, prevLogIndex, prevLogTerm, leaderCommit int, entries []Entry) {
 	// Leaders rule 3
 	rf.mu.Lock()
 	if prevLogIndex >= rf.nextIndex[server] {
@@ -453,7 +453,6 @@ func (rf *Raft) doAppendEntries(replyCount *int32, successCount *int32, server, 
 	reply := &AppendEntriesReply{}
 
 	ok := rf.sendAppendEntries(server, args, reply)
-	atomic.AddInt32(replyCount, 1)
 
 	if ok {
 		rf.mu.Lock()
@@ -465,8 +464,6 @@ func (rf *Raft) doAppendEntries(replyCount *int32, successCount *int32, server, 
 			rf.votedFor = -1
 			rf.currentTerm = reply.Term
 		} else if reply.Success {
-			atomic.AddInt32(successCount, 1)
-
 			rf.nextIndex[server] = prevLogIndex + len(entries) + 1
 			rf.matchIndex[server] = prevLogIndex + len(entries)
 
@@ -548,12 +545,9 @@ func (rf *Raft) Start(command interface{}) (index int, term int, isLeader bool) 
 				rf.me, rf.currentTerm, rf.commitIndex, rf.lastApplied, rf.log)
 		}
 
-		replyCount := int32(1)
-		successCount := int32(1)
-
 		index, term, isLeader = len(rf.log)-1, rf.currentTerm, true
 
-		go rf.broadcast(&replyCount, &successCount, rf.currentTerm, rf.me, prevLogIndex, prevLogTerm, rf.commitIndex, []Entry{{rf.currentTerm, command}})
+		go rf.broadcast(rf.currentTerm, rf.me, prevLogIndex, prevLogTerm, rf.commitIndex, []Entry{{rf.currentTerm, command}})
 	}
 
 	return index, term, isLeader
@@ -643,10 +637,10 @@ func (rf *Raft) voter(term, lastLogIndex, lastLogTerm int) {
 	}
 }
 
-func (rf *Raft) broadcast(replyCount *int32, successCount *int32, currentTerm int, leaderId int, prevLogIndex int, prevLogTerm int, leaderCommit int, entries []Entry) {
+func (rf *Raft) broadcast(currentTerm int, leaderId int, prevLogIndex int, prevLogTerm int, leaderCommit int, entries []Entry) {
 	for i := 0; i < len(rf.peers); i++ {
 		if i != rf.me {
-			go rf.doAppendEntries(replyCount, successCount, i, currentTerm, leaderId, prevLogIndex, prevLogTerm, leaderCommit, entries)
+			go rf.doAppendEntries(i, currentTerm, leaderId, prevLogIndex, prevLogTerm, leaderCommit, entries)
 		}
 	}
 }
@@ -662,12 +656,9 @@ func (rf *Raft) pacemaker() {
 				break
 			}
 
-			replyCount := int32(1)
-			successCount := int32(1)
-
 			lastLogIndex := len(rf.log) - 1
 			lastLogTerm := rf.log[lastLogIndex].Term
-			go rf.broadcast(&replyCount, &successCount, rf.currentTerm, rf.me, lastLogIndex, lastLogTerm, rf.commitIndex, []Entry{})
+			go rf.broadcast(rf.currentTerm, rf.me, lastLogIndex, lastLogTerm, rf.commitIndex, []Entry{})
 
 			rf.mu.Unlock()
 
