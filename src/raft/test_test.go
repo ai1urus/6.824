@@ -927,6 +927,8 @@ func TestFigure8Unreliable2C(t *testing.T) {
 
 	cfg.one(rand.Int()%10000, 1, true)
 
+	// fmt.Println("Pass first one.")
+
 	nup := servers
 	for iters := 0; iters < 1000; iters++ {
 		if iters == 200 {
@@ -962,13 +964,19 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		}
 	}
 
+	// fmt.Println("1000 disconnect end.")
+
 	for i := 0; i < servers; i++ {
 		if cfg.connected[i] == false {
 			cfg.connect(i)
 		}
 	}
 
+	// fmt.Println("all server Reconnect.")
+
 	cfg.one(rand.Int()%10000, servers, true)
+
+	// fmt.Println("end last one.")
 
 	cfg.end()
 }

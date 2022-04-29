@@ -30,11 +30,10 @@ import (
 )
 
 var ElectionLog bool = false
+var ElectionWinLog bool = false
 var AppendEntriesLog bool = false
 var AppendChangeLog bool = false
 var ApplyMsgLog bool = false
-var ApplyCheckLog bool = false
-var StartLog bool = true
 
 //
 // as each Raft peer becomes aware that successive log entries are
@@ -233,10 +232,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	defer rf.mu.Unlock()
 	defer rf.persist()
 
-	reply.Term = rf.currentTerm
-	reply.VoteGranted = false
 	// 请求term小于当前term 立即返回
 	if args.Term < rf.currentTerm {
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = false
 		return
 	}
 	// 请求term大于当前term 当前node转为follower
@@ -245,7 +244,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.votedFor = -1
 		rf.currentTerm = args.Term
 	}
-
+	reply.Term = rf.currentTerm
+	reply.VoteGranted = false
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
 		// candidate的LastLogTerm大于等于当前的lastLogTerm一样新才允许投票
 		if lastLogIndex := len(rf.log) - 1; args.LastLogTerm > rf.log[lastLogIndex].Term ||
@@ -292,7 +292,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 
 	defer rf.mu.Unlock()
-	defer rf.persist()
 
 	defer func() {
 		if AppendEntriesLog {
@@ -306,10 +305,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.me, rf.currentTerm, rf.commitIndex, rf.lastApplied, rf.log, args.LeaderId, args.Term, args.LeaderCommit, args.Entries)
 	}
 
-	reply.Term = rf.currentTerm
+	if ApplyMsgLog && rf.currentTerm >= 60 {
+		fmt.Printf("[APPLY] peeeer %v(%3v) log(%v)\n", rf.me, rf.currentTerm, rf.log)
+	}
 
 	// 请求term小于当前term 立即返回
 	if args.Term < rf.currentTerm {
+		reply.Term = rf.currentTerm
 		reply.Success = false
 		return
 	}
@@ -323,6 +325,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.votedFor = -1
 		rf.currentTerm = args.Term
 	}
+
+	reply.Term = rf.currentTerm
 
 	// 当前log长度小于PrevLogIndex或对应index的term不同，则返回false
 	lastLogIndex := len(rf.log) - 1
@@ -347,6 +351,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			}
 		}
 		reply.ConflictIndex = r
+		reply.ConflictTerm = rf.log[reply.ConflictIndex].Term
 		return
 	}
 
@@ -360,15 +365,21 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	rf.log = append(rf.log, args.Entries[matchLogIndex-args.PrevLogIndex-1:]...)
+	rf.persist()
+	// if len(args.Entries[matchLogIndex-args.PrevLogIndex-1:]) > 0 {
+	// 	fmt.Printf("[LOG APPEND] p%v-%v append %v\n", rf.me, rf.currentTerm, args.Entries[matchLogIndex-args.PrevLogIndex-1:])
+	// }
 
-	if args.LeaderCommit > rf.commitIndex {
-		lastNewIndex := args.PrevLogIndex + len(args.Entries)
-		if args.LeaderCommit < lastNewIndex {
-			rf.commitIndex = args.LeaderCommit
-		} else {
-			rf.commitIndex = lastNewIndex
-		}
+	lastNewIndex := args.PrevLogIndex + len(args.Entries)
+	newCommitIndex := min(lastNewIndex, args.LeaderCommit)
+	if newCommitIndex > rf.commitIndex && rf.log[newCommitIndex].Term == rf.currentTerm {
+		rf.commitIndex = newCommitIndex
 	}
+	// if args.LeaderCommit < lastNewIndex {
+	// 	rf.commitIndex = args.LeaderCommit
+	// } else {
+	// 	rf.commitIndex = lastNewIndex
+	// }
 
 	// [All servers] rule 1
 	if rf.lastApplied < rf.commitIndex {
@@ -498,7 +509,7 @@ func (rf *Raft) doAppendEntries(server, term, leaderId, prevLogIndex, prevLogTer
 			}
 
 			// conflictTerm 存在
-			if r > 0 && r < len(rf.log) {
+			if l > 0 && l < len(rf.log) && r > 0 && r < len(rf.log) && rf.log[l].Term == reply.ConflictTerm {
 				rf.nextIndex[server] = r
 			} else {
 				rf.nextIndex[server] = reply.ConflictIndex
@@ -530,8 +541,13 @@ func (rf *Raft) Start(command interface{}) (index int, term int, isLeader bool) 
 	if rf.state == LeaderState {
 		prevLogIndex := len(rf.log) - 1
 		prevLogTerm := rf.log[prevLogIndex].Term
+		currentTerm := rf.currentTerm
+		commitIndex := rf.commitIndex
 
 		rf.log = append(rf.log, Entry{Term: rf.currentTerm, Command: command})
+		// if rf.log[len(rf.log)-1].Command == rf.log[len(rf.log)-2].Command {
+		// 	fmt.Printf("[LOG APPEND] p%v-%v repet %v log %v\n", rf.me, rf.currentTerm, Entry{Term: rf.currentTerm, Command: command}, rf.log)
+		// }
 		rf.persist()
 
 		rf.nextIndex[rf.me]++
@@ -544,11 +560,13 @@ func (rf *Raft) Start(command interface{}) (index int, term int, isLeader bool) 
 
 		index, term, isLeader = len(rf.log)-1, rf.currentTerm, true
 
-		for i := 0; i < len(rf.peers); i++ {
-			if i != rf.me {
-				go rf.doAppendEntries(i, rf.currentTerm, rf.me, prevLogIndex, prevLogTerm, rf.commitIndex, []Entry{{rf.currentTerm, command}})
+		go func() {
+			for i := 0; i < len(rf.peers); i++ {
+				if i != rf.me {
+					go rf.doAppendEntries(i, currentTerm, rf.me, prevLogIndex, prevLogTerm, commitIndex, []Entry{{currentTerm, command}})
+				}
 			}
-		}
+		}()
 	}
 
 	return index, term, isLeader
@@ -594,7 +612,7 @@ func (rf *Raft) ticker() {
 	for !rf.killed() {
 		// random sleep
 		rand.Seed(time.Now().Unix() + int64(rf.me))
-		electionTimeout := 400 + rand.Intn(200)
+		electionTimeout := 450 + rand.Intn(150)
 		time.Sleep(time.Duration(electionTimeout) * time.Millisecond)
 
 		// timeout judgement
@@ -672,7 +690,7 @@ func (rf *Raft) startElection(term, lastLogIndex, lastLogTerm int) {
 
 						winElection = true
 
-						if ElectionLog {
+						if ElectionWinLog {
 							fmt.Printf("[ELECTION WIN  ] peer(%v term %v) got %v/%v ticket, win the election\n", rf.me, rf.currentTerm, voteCount, len(rf.peers))
 						}
 					}
@@ -717,14 +735,20 @@ func (rf *Raft) applier() {
 		if lastApplied < commitIndex {
 			newApplyEntries = make([]Entry, commitIndex-lastApplied)
 			copy(newApplyEntries, rf.log[lastApplied+1:commitIndex+1])
+			if ApplyMsgLog {
+				// fmt.Printf("[APPLY] p%v-%v lastApplied %v commitIndex %v entries(%v) log(%v)\n", rf.me, currentTerm, lastApplied, commitIndex, newApplyEntries, rf.log)
+				if rf.state == LeaderState {
+					fmt.Printf("[APPLY] leader %v(%3v) log(%v)\n", rf.me, currentTerm, rf.log)
+				} else {
+					fmt.Printf("[APPLY] peeeer %v(%3v) log(%v)\n", rf.me, currentTerm, rf.log)
+				}
+
+			}
 		}
 		rf.mu.Unlock()
 
 		lastApplied++
 		for appliedIndex := lastApplied; appliedIndex <= commitIndex; appliedIndex++ {
-			if ApplyMsgLog {
-				fmt.Printf("[APPLY] leader(%v term %v) apply entries(%v)\n", rf.me, currentTerm, newApplyEntries[appliedIndex-lastApplied])
-			}
 			rf.applyCh <- ApplyMsg{CommandValid: true, Command: newApplyEntries[appliedIndex-lastApplied].Command, CommandIndex: appliedIndex}
 		}
 
