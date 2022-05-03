@@ -1147,6 +1147,8 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 	cfg.one(rand.Int(), servers, true)
 	leader1 := cfg.checkOneLeader()
 
+	fmt.Println("Pass first one")
+
 	for i := 0; i < iters; i++ {
 		victim := (leader1 + 1) % servers
 		sender := leader1
@@ -1170,6 +1172,8 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 			cfg.rafts[sender].Start(rand.Int())
 		}
 
+		fmt.Printf("%v iter pass %v start\n", i, nn)
+
 		// let applier threads catch up with the Start()'s
 		if disconnect == false && crash == false {
 			// make sure all followers have caught up, so that
@@ -1179,6 +1183,8 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 		} else {
 			cfg.one(rand.Int(), servers-1, true)
 		}
+
+		fmt.Printf("%v iter pass first one\n", i)
 
 		if cfg.LogSize() >= MAXLOGSIZE {
 			cfg.t.Fatalf("Log size too large")
@@ -1243,7 +1249,11 @@ func TestSnapshotAllCrash2D(t *testing.T) {
 			cfg.one(rand.Int(), servers, true)
 		}
 
+		fmt.Printf("%v iter pass %v one\n", i, nn)
+
 		index1 := cfg.one(rand.Int(), servers, true)
+
+		fmt.Printf("%v iter pass first one\n", i)
 
 		// crash all
 		for i := 0; i < servers; i++ {
@@ -1257,6 +1267,8 @@ func TestSnapshotAllCrash2D(t *testing.T) {
 		}
 
 		index2 := cfg.one(rand.Int(), servers, true)
+		fmt.Printf("%v iter pass second one\n", i)
+
 		if index2 < index1+1 {
 			t.Fatalf("index decreased from %v to %v", index1, index2)
 		}
